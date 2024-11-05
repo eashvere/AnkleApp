@@ -67,4 +67,12 @@ class BleManager(private val context: Context) {
             Log.d("BleManager", "Scanning stopped.")
         }
     }
+
+    //GATT Connection
+
+    //RX Data
+
+    //Process Data
+
+    //Alert + Dashboard
 }

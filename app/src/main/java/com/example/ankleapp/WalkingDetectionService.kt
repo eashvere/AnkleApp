@@ -1,5 +1,6 @@
 package com.example.ankleapp
 
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -15,6 +16,7 @@ class WalkingDetectionService : Service() {
         startForegroundService()
     }
 
+    @SuppressLint("NewApi")
     private fun startForegroundService() {
         val channelId = "walking_detection_channel"
         val channelName = "Walking Detection"
@@ -33,7 +35,7 @@ class WalkingDetectionService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Handle any additional service operations here if needed
+
         return START_STICKY
     }
 
@@ -43,6 +45,6 @@ class WalkingDetectionService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        // Clean up resources if necessary
+
     }
 }

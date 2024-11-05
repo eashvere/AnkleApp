@@ -22,7 +22,7 @@ class WalkingDetector(
     private var isWalking = false
     private var walkingTimeoutJob: Job? = null
 
-    private val timeoutMillis: Long = 1000 // Shorter timeout for quicker stop detection
+    private val timeoutMillis: Long = 1000
 
     fun startDetection() {
         stepDetector?.let {
