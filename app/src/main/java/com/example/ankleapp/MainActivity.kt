@@ -23,13 +23,14 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.example.ankleapp.ui.theme.AnkleAppTheme
 
-class MainActivity : ComponentActivity(), WalkingListener {
+
+class MainActivity : ComponentActivity(), WalkingListener, BleManager.ConnectionListener {
 
     private lateinit var bleManager: BleManager
     private lateinit var walkingDetector: WalkingDetector
 
     private var isWalking by mutableStateOf(false)
-    private var devices by mutableStateOf(listOf<BluetoothDevice>())
+    private var connectionStatus by mutableStateOf("User is not walking")
 
     private val requestPermissionsLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -44,7 +45,9 @@ class MainActivity : ComponentActivity(), WalkingListener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        bleManager = BleManager(this)
+        bleManager = BleManager(this).apply {
+            connectionListener = this@MainActivity
+        }
 
         checkPermissionsAndStart()
 
@@ -54,7 +57,7 @@ class MainActivity : ComponentActivity(), WalkingListener {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    MainContent(isWalking, devices)
+                    MainContent(isWalking, connectionStatus)
                 }
             }
         }
@@ -86,27 +89,35 @@ class MainActivity : ComponentActivity(), WalkingListener {
     override fun onWalkingDetected(isWalking: Boolean) {
         this.isWalking = isWalking
         if (isWalking) {
-            startBleScan() // Trigger scan when walking is detected
+            connectionStatus = "Trying to connect"
+            startBleScan()
+        } else {
+            stopBleScan()
+            connectionStatus = "User is not walking"
         }
     }
 
     private fun startBleScan() {
-        bleManager.scanLeDevice { updatedDevices ->
-            if (isWalking) {
-                devices = updatedDevices.toList() // Update device list only if user is walking
-            }
-        }
+        bleManager.scanForSpecificDevice("SmartAnkleBrace") // Replace with the desired device name or UUID
     }
 
     private fun stopBleScan() {
-        bleManager.stopScanning()  // Stop scanning and clear the device list
-        devices = emptyList()
+        bleManager.stopScanning()
+    }
+
+    // Connection listener methods
+    override fun onConnected() {
+        connectionStatus = "Connection established to brace"
+    }
+
+    override fun onDisconnected() {
+        connectionStatus = "Trying to connect"
     }
 
     override fun onPause() {
         super.onPause()
         walkingDetector.stopDetection()
-        stopBleScan()  // Ensure scanning stops when the app is paused
+        stopBleScan()
     }
 
     override fun onResume() {
@@ -116,45 +127,24 @@ class MainActivity : ComponentActivity(), WalkingListener {
 }
 
 @Composable
-fun MainContent(isWalking: Boolean, devices: List<BluetoothDevice>) {
+fun MainContent(isWalking: Boolean, connectionStatus: String) {
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier.fillMaxSize()
     ) {
-        if (isWalking) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text(text = "User is walking", fontSize = 20.sp, modifier = Modifier.padding(bottom = 16.dp))
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = if (isWalking) "User is walking" else "User is not walking",
+                fontSize = 20.sp,
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
 
-                LazyColumn {
-                    items(devices) { device ->
-                        DeviceItem(device)
-                    }
-                }
-            }
-        } else {
-            Text(text = "User is not walking", fontSize = 20.sp)
+            Text(
+                text = connectionStatus,
+                fontSize = 18.sp,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
+            )
         }
-    }
-}
-
-@SuppressLint("MissingPermission")
-@Composable
-fun DeviceItem(device: BluetoothDevice) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(8.dp)
-    ) {
-        Text(
-            text = device.name ?: "Unknown Device",
-            fontSize = 18.sp,
-            modifier = Modifier.padding(bottom = 4.dp)
-        )
-        Text(
-            text = device.address,
-            fontSize = 14.sp,
-            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
-        )
     }
 }
 
@@ -162,6 +152,6 @@ fun DeviceItem(device: BluetoothDevice) {
 @Composable
 fun MainContentPreview() {
     AnkleAppTheme {
-        MainContent(isWalking = false, devices = emptyList())
+        MainContent(isWalking = false, connectionStatus = "User is not walking")
     }
 }

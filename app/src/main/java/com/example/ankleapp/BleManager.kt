@@ -1,6 +1,5 @@
 package com.example.ankleapp
 
-import LeDeviceListAdapter
 import android.annotation.SuppressLint
 import android.bluetooth.*
 import android.bluetooth.le.ScanCallback
@@ -12,27 +11,31 @@ import android.widget.Toast
 
 class BleManager(private val context: Context) {
 
+    interface ConnectionListener {
+        fun onConnected()
+        fun onDisconnected()
+    }
+
+    var connectionListener: ConnectionListener? = null
+
     private val bluetoothAdapter: BluetoothAdapter? by lazy {
         val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         bluetoothManager.adapter
     }
-
     private val bluetoothLeScanner = bluetoothAdapter?.bluetoothLeScanner
     private var scanning = false
     private val handler = Handler()
+    private var bluetoothGatt: BluetoothGatt? = null
 
-    private val SCAN_PERIOD: Long = 2000 // 2 seconds
+    private val SCAN_PERIOD: Long = 2000 // 2 seconds for scanning
 
-    private val devicesFound = mutableListOf<BluetoothDevice>()
-
-    private val leScanCallback: ScanCallback = object : ScanCallback() {
+    private val leScanCallback = object : ScanCallback() {
+        @SuppressLint("MissingPermission")
         override fun onScanResult(callbackType: Int, result: ScanResult) {
-            result.device?.let {
-                if (!devicesFound.contains(it)) {
-                    devicesFound.add(it)
-                    onDevicesUpdated?.invoke(devicesFound) // Update UI with each new device
-                    Log.d("BleManager", "Device found: ${it.name} - ${it.address}")
-                }
+            super.onScanResult(callbackType, result)
+            if (result.device.name == "SmartAnkleBrace") { // Match the device name
+                stopScanning()
+                connectToDevice(result.device)
             }
         }
 
@@ -42,20 +45,16 @@ class BleManager(private val context: Context) {
         }
     }
 
-    private var onDevicesUpdated: ((List<BluetoothDevice>) -> Unit)? = null
-
     @SuppressLint("MissingPermission")
-    fun scanLeDevice(onDevicesUpdated: (List<BluetoothDevice>) -> Unit) {
-        this.onDevicesUpdated = onDevicesUpdated
-
+    fun scanForSpecificDevice(deviceName: String) {
         if (!scanning) {
-            devicesFound.clear()
             handler.postDelayed({
                 stopScanning()
             }, SCAN_PERIOD)
 
             scanning = true
             bluetoothLeScanner?.startScan(leScanCallback)
+            Log.d("BleManager", "Scanning started.")
         }
     }
 
@@ -68,11 +67,39 @@ class BleManager(private val context: Context) {
         }
     }
 
-    //GATT Connection
+    @SuppressLint("MissingPermission")
+    private fun connectToDevice(device: BluetoothDevice) {
+        bluetoothGatt = device.connectGatt(context, false, gattCallback)
+    }
 
-    //RX Data
+    private val gattCallback = object : BluetoothGattCallback() {
+        @SuppressLint("MissingPermission")
+        override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+            when (newState) {
+                BluetoothProfile.STATE_CONNECTED -> {
+                    Log.i("BleManager", "Connected to GATT server.")
+                    bluetoothGatt?.discoverServices()
+                    connectionListener?.onConnected()
+                }
+                BluetoothProfile.STATE_DISCONNECTED -> {
+                    Log.i("BleManager", "Disconnected from GATT server.")
+                    connectionListener?.onDisconnected()
+                }
+            }
+        }
 
-    //Process Data
+        override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                Log.i("BleManager", "Services discovered.")
+                Log.i("BleManager", bluetoothGatt?.services.toString())
+            }
+        }
+    }
 
-    //Alert + Dashboard
+    @SuppressLint("MissingPermission")
+    fun disconnectGatt() {
+        bluetoothGatt?.close()
+        bluetoothGatt = null
+        connectionListener?.onDisconnected()
+    }
 }
