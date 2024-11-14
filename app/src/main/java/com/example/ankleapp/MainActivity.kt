@@ -11,8 +11,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -23,7 +21,6 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.example.ankleapp.ui.theme.AnkleAppTheme
 
-
 class MainActivity : ComponentActivity(), WalkingListener, BleManager.ConnectionListener {
 
     private lateinit var bleManager: BleManager
@@ -31,6 +28,7 @@ class MainActivity : ComponentActivity(), WalkingListener, BleManager.Connection
 
     private var isWalking by mutableStateOf(false)
     private var connectionStatus by mutableStateOf("User is not walking")
+    private var receivedData by mutableStateOf("")
 
     private val requestPermissionsLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -57,7 +55,7 @@ class MainActivity : ComponentActivity(), WalkingListener, BleManager.Connection
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    MainContent(isWalking, connectionStatus)
+                    MainContent(isWalking, connectionStatus, receivedData)
                 }
             }
         }
@@ -112,6 +110,11 @@ class MainActivity : ComponentActivity(), WalkingListener, BleManager.Connection
 
     override fun onDisconnected() {
         connectionStatus = "Trying to connect"
+        receivedData = "" // Clear the data when disconnected
+    }
+
+    override fun onDataReceived(data: String) {
+        receivedData = data // Update the UI with received data
     }
 
     override fun onPause() {
@@ -127,7 +130,7 @@ class MainActivity : ComponentActivity(), WalkingListener, BleManager.Connection
 }
 
 @Composable
-fun MainContent(isWalking: Boolean, connectionStatus: String) {
+fun MainContent(isWalking: Boolean, connectionStatus: String, receivedData: String) {
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier.fillMaxSize()
@@ -144,6 +147,14 @@ fun MainContent(isWalking: Boolean, connectionStatus: String) {
                 fontSize = 18.sp,
                 color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
             )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Text(
+                text = "Received Data: $receivedData",
+                fontSize = 16.sp,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
+            )
         }
     }
 }
@@ -152,6 +163,6 @@ fun MainContent(isWalking: Boolean, connectionStatus: String) {
 @Composable
 fun MainContentPreview() {
     AnkleAppTheme {
-        MainContent(isWalking = false, connectionStatus = "User is not walking")
+        MainContent(isWalking = false, connectionStatus = "User is not walking", receivedData = "")
     }
 }
