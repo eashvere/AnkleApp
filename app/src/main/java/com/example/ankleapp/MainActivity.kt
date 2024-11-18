@@ -88,44 +88,48 @@ class MainActivity : ComponentActivity(), WalkingListener, BleManager.Connection
         this.isWalking = isWalking
         if (isWalking) {
             connectionStatus = "Trying to connect"
-            startBleScan()
+            bleManager.scanForSpecificDevice("SmartAnkleBrace")
         } else {
-            stopBleScan()
+            bleManager.disconnectGatt()
             connectionStatus = "User is not walking"
         }
     }
 
-    private fun startBleScan() {
-        bleManager.scanForSpecificDevice("SmartAnkleBrace") // Replace with the desired device name or UUID
-    }
-
-    private fun stopBleScan() {
-        bleManager.stopScanning()
-    }
-
-    // Connection listener methods
     override fun onConnected() {
         connectionStatus = "Connection established to brace"
     }
 
     override fun onDisconnected() {
-        connectionStatus = "Trying to connect"
-        receivedData = "" // Clear the data when disconnected
+        if (isWalking) {
+            connectionStatus = "Trying to connect"
+        } else {
+            connectionStatus = "User is not walking"
+        }
+    }
+
+    override fun onConnectionStopped() {
+        connectionStatus = "User is not walking"
     }
 
     override fun onDataReceived(data: String) {
-        receivedData = data // Update the UI with received data
+        receivedData = data
     }
 
     override fun onPause() {
         super.onPause()
         walkingDetector.stopDetection()
-        stopBleScan()
+        bleManager.stopScanning()
     }
 
     override fun onResume() {
         super.onResume()
         walkingDetector.startDetection()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        bleManager.cleanup()
+        walkingDetector.stopDetection()
     }
 }
 

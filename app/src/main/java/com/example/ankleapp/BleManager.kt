@@ -3,11 +3,14 @@ package com.example.ankleapp
 import android.annotation.SuppressLint
 import android.bluetooth.*
 import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.os.Handler
+import android.os.Looper
+import android.os.ParcelUuid
 import android.util.Log
-import android.widget.Toast
 import java.util.UUID
 
 class BleManager(private val context: Context) {
@@ -15,50 +18,86 @@ class BleManager(private val context: Context) {
     interface ConnectionListener {
         fun onConnected()
         fun onDisconnected()
-        fun onDataReceived(data: String) // Callback for received data
+        fun onDataReceived(data: String)
+        fun onConnectionStopped()
     }
 
     var connectionListener: ConnectionListener? = null
+    private var lastConnectedDeviceAddress: String? = null
+    private var isIntentionalDisconnect = false
 
+    private val bluetoothManager: BluetoothManager by lazy {
+        context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+    }
     private val bluetoothAdapter: BluetoothAdapter? by lazy {
-        val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         bluetoothManager.adapter
     }
     private val bluetoothLeScanner = bluetoothAdapter?.bluetoothLeScanner
     private var scanning = false
-    private val handler = Handler()
+    private val handler = Handler(Looper.getMainLooper())
     private var bluetoothGatt: BluetoothGatt? = null
 
-    private val SCAN_PERIOD: Long = 2000 // 2 seconds for scanning
-    private val serviceUUID = java.util.UUID.fromString("23e6ab8d-4bf2-4be6-b3e0-9d4c07028e5e") // Replace with your service UUID
-    private val characteristicUUID = java.util.UUID.fromString("bba3b2e6-5dbf-406b-ad70-072c8f46b5cf") // Replace with your characteristic UUID
+    private val SCAN_PERIOD: Long = 10000
+    private val serviceUUID = UUID.fromString("23e6ab8d-4bf2-4be6-b3e0-9d4c07028e5e")
+    private val characteristicUUID = UUID.fromString("bba3b2e6-5dbf-406b-ad70-072c8f46b5cf")
+
+    private val scanFilters = listOf(
+        ScanFilter.Builder()
+            .setDeviceName("SmartAnkleBrace")
+            .build()
+    )
+
+    private val scanSettings = ScanSettings.Builder()
+        .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+        .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
+        .setMatchMode(ScanSettings.MATCH_MODE_AGGRESSIVE)
+        .build()
 
     private val leScanCallback = object : ScanCallback() {
         @SuppressLint("MissingPermission")
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             super.onScanResult(callbackType, result)
-            if (result.device.name == "SmartAnkleBrace") { // Match the device name
+            val device = result.device
+
+            if (device.name == "SmartAnkleBrace") {
+                Log.d("BleManager", "Found device: ${device.address}")
                 stopScanning()
-                connectToDevice(result.device)
+                connectToDevice(device)
             }
         }
 
         override fun onScanFailed(errorCode: Int) {
             Log.e("BleManager", "Scan failed with error: $errorCode")
-            Toast.makeText(context, "Scan failed with error: $errorCode", Toast.LENGTH_SHORT).show()
+            scanning = false
+            resetConnection()
         }
     }
 
     @SuppressLint("MissingPermission")
     fun scanForSpecificDevice(deviceName: String) {
-        if (!scanning) {
+        isIntentionalDisconnect = false
+        resetConnection()
+        startScanning()
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startScanning() {
+        if (!scanning && bluetoothAdapter?.isEnabled == true) {
+            scanning = true
+
             handler.postDelayed({
                 stopScanning()
             }, SCAN_PERIOD)
 
-            scanning = true
-            bluetoothLeScanner?.startScan(leScanCallback)
-            Log.d("BleManager", "Scanning started.")
+            try {
+                bluetoothLeScanner?.startScan(scanFilters, scanSettings, leScanCallback)
+                Log.d("BleManager", "Scanning started with filters")
+            } catch (e: Exception) {
+                Log.e("BleManager", "Failed to start scan: ${e.message}")
+                scanning = false
+            }
+        } else {
+            Log.e("BleManager", "Cannot start scan. Bluetooth enabled: ${bluetoothAdapter?.isEnabled}")
         }
     }
 
@@ -66,35 +105,65 @@ class BleManager(private val context: Context) {
     fun stopScanning() {
         if (scanning) {
             scanning = false
-            bluetoothLeScanner?.stopScan(leScanCallback)
-            Log.d("BleManager", "Scanning stopped.")
+            try {
+                bluetoothLeScanner?.stopScan(leScanCallback)
+                Log.d("BleManager", "Scanning stopped")
+            } catch (e: Exception) {
+                Log.e("BleManager", "Error stopping scan: ${e.message}")
+            }
         }
     }
 
     @SuppressLint("MissingPermission")
     private fun connectToDevice(device: BluetoothDevice) {
-        bluetoothGatt = device.connectGatt(context, false, gattCallback)
+        Log.d("BleManager", "Attempting to connect to device: ${device.address}")
+
+        lastConnectedDeviceAddress = device.address
+
+        bluetoothGatt?.let { gatt ->
+            gatt.disconnect()
+            gatt.close()
+        }
+        bluetoothGatt = null
+
+        handler.postDelayed({
+            bluetoothGatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+        }, 200)
     }
 
     private val gattCallback = object : BluetoothGattCallback() {
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+            Log.d("BleManager", "Connection state change: status=$status newState=$newState")
+
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
                     Log.i("BleManager", "Connected to GATT server.")
-                    bluetoothGatt?.discoverServices()
-                    connectionListener?.onConnected()
+                    handler.post {
+                        gatt.discoverServices()
+                        connectionListener?.onConnected()
+                    }
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     Log.i("BleManager", "Disconnected from GATT server.")
-                    connectionListener?.onDisconnected()
+                    resetConnection()
+                    handler.post {
+                        if (isIntentionalDisconnect) {
+                            connectionListener?.onConnectionStopped()
+                        } else {
+                            connectionListener?.onDisconnected()
+                        }
+                    }
                 }
+            }
+
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                resetConnection()
             }
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                Log.i("BleManager", "Services discovered.")
                 val characteristic = gatt.getService(serviceUUID)?.getCharacteristic(characteristicUUID)
                 if (characteristic != null) {
                     enableNotifications(characteristic)
@@ -102,10 +171,14 @@ class BleManager(private val context: Context) {
             }
         }
 
-        override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
+        override fun onCharacteristicChanged(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic
+        ) {
             val data = characteristic.getStringValue(0)
-            Log.i("BleManager", "Data received: $data")
-            connectionListener?.onDataReceived(data)
+            handler.post {
+                connectionListener?.onDataReceived(data)
+            }
         }
     }
 
@@ -119,8 +192,34 @@ class BleManager(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     fun disconnectGatt() {
-        bluetoothGatt?.close()
-        bluetoothGatt = null
-        connectionListener?.onDisconnected()
+        isIntentionalDisconnect = true
+        resetConnection()
+        connectionListener?.onConnectionStopped()
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun resetConnection() {
+        stopScanning()
+
+        bluetoothGatt?.let { gatt ->
+            try {
+                gatt.disconnect()
+                handler.postDelayed({
+                    gatt.close()
+                    bluetoothGatt = null
+                }, 500)
+            } catch (e: Exception) {
+                Log.e("BleManager", "Error during GATT cleanup: ${e.message}")
+            }
+        }
+
+        Log.d("BleManager", "Connection reset completed")
+    }
+
+    fun cleanup() {
+        isIntentionalDisconnect = true
+        handler.removeCallbacksAndMessages(null)
+        resetConnection()
+        lastConnectedDeviceAddress = null
     }
 }
