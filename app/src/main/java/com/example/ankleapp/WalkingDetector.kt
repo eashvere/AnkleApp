@@ -19,7 +19,7 @@ class WalkingDetector(
     private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
     private val stepDetector: Sensor? = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)
 
-    private var isWalking = false
+    var isWalking = false
     private var walkingTimeoutJob: Job? = null
 
     private val timeoutMillis: Long = 2000

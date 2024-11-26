@@ -3,9 +3,14 @@ package com.example.ankleapp
 import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -19,16 +24,35 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.example.ankleapp.data.AnkleDataRepository
 import com.example.ankleapp.ui.theme.AnkleAppTheme
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 
 class MainActivity : ComponentActivity(), WalkingListener, BleManager.ConnectionListener {
 
     private lateinit var bleManager: BleManager
     private lateinit var walkingDetector: WalkingDetector
+    private lateinit var dataRepository: AnkleDataRepository
 
     private var isWalking by mutableStateOf(false)
     private var connectionStatus by mutableStateOf("User is not walking")
     private var receivedData by mutableStateOf("")
+    private var dailyStats by mutableStateOf("No stats available")
+
+    @SuppressLint("BatteryLife", "ObsoleteSdkInt")
+    private fun requestBatteryOptimizationExemption() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val intent = Intent()
+            val packageName = packageName
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+                intent.action = Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
+                intent.data = Uri.parse("package:$packageName")
+                startActivity(intent)
+            }
+        }
+    }
 
     private val requestPermissionsLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -43,11 +67,26 @@ class MainActivity : ComponentActivity(), WalkingListener, BleManager.Connection
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Request battery optimization exemption
+        requestBatteryOptimizationExemption()
+
+        dataRepository = AnkleDataRepository(this)
         bleManager = BleManager(this).apply {
             connectionListener = this@MainActivity
         }
 
         checkPermissionsAndStart()
+
+        // Start the service
+        val serviceIntent = Intent(this, WalkingDetectionService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(serviceIntent)
+        } else {
+            startService(serviceIntent)
+        }
+
+        // Start periodic stats updates
+        updateDailyStats()
 
         setContent {
             AnkleAppTheme {
@@ -55,10 +94,41 @@ class MainActivity : ComponentActivity(), WalkingListener, BleManager.Connection
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    MainContent(isWalking, connectionStatus, receivedData)
+                    MainContent(
+                        isWalking = isWalking,
+                        connectionStatus = connectionStatus,
+                        receivedData = receivedData,
+                        dailyStats = dailyStats
+                    )
                 }
             }
         }
+    }
+
+    @SuppressLint("NewApi")
+    private fun updateDailyStats() {
+        val stats = dataRepository.getDailyStats(LocalDateTime.now())
+        val formatter = DateTimeFormatter.ofPattern("MMM dd, yyyy")
+
+        dailyStats = """
+        Date: ${stats.date.format(formatter)}
+        
+        Walking Summary:
+        • Total Walking Time: ${formatDuration(stats.totalWalkingTime)}
+        • Bad Posture Time: ${formatDuration(stats.totalBadPostureTime)}
+        • Bad Posture Percentage: ${String.format("%.1f", stats.badPosturePercentage())}%
+        
+        Events Summary:
+        • Total Events: ${stats.totalEvents()}
+        • Avg Event Duration: ${String.format("%.1f", stats.averageEventDuration)} seconds
+    """.trimIndent()
+    }
+
+    private fun formatDuration(seconds: Long): String {
+        val hours = seconds / 3600
+        val minutes = (seconds % 3600) / 60
+        val remainingSeconds = seconds % 60
+        return String.format("%02d:%02d:%02d", hours, minutes, remainingSeconds)
     }
 
     private fun checkPermissionsAndStart() {
@@ -66,10 +136,17 @@ class MainActivity : ComponentActivity(), WalkingListener, BleManager.Connection
             Manifest.permission.ACTIVITY_RECOGNITION,
             Manifest.permission.BLUETOOTH_SCAN,
             Manifest.permission.BLUETOOTH_CONNECT,
-            Manifest.permission.ACCESS_FINE_LOCATION
-        )
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.MODIFY_AUDIO_SETTINGS,
+            // Add notification permission for Android 13+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                Manifest.permission.POST_NOTIFICATIONS
+            } else null
+        ).filterNotNull().toTypedArray()
 
-        if (permissions.any { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }) {
+        if (permissions.any {
+                ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+            }) {
             requestPermissionsLauncher.launch(permissions)
         } else {
             startWalkingDetection()
@@ -89,9 +166,14 @@ class MainActivity : ComponentActivity(), WalkingListener, BleManager.Connection
         if (isWalking) {
             connectionStatus = "Trying to connect"
             bleManager.scanForSpecificDevice("SmartAnkleBrace")
+            dataRepository.startWalkingSession()
         } else {
             bleManager.disconnectGatt()
             connectionStatus = "User is not walking"
+            dataRepository.currentSessionId?.let {
+                dataRepository.endWalkingSession(it)
+                updateDailyStats() // Update stats when walking session ends
+            }
         }
     }
 
@@ -113,6 +195,7 @@ class MainActivity : ComponentActivity(), WalkingListener, BleManager.Connection
 
     override fun onDataReceived(data: String) {
         receivedData = data
+        dataRepository.handlePostureData(data)
     }
 
     override fun onPause() {
@@ -124,6 +207,7 @@ class MainActivity : ComponentActivity(), WalkingListener, BleManager.Connection
     override fun onResume() {
         super.onResume()
         walkingDetector.startDetection()
+        updateDailyStats() // Update stats when app resumes
     }
 
     override fun onDestroy() {
@@ -134,31 +218,74 @@ class MainActivity : ComponentActivity(), WalkingListener, BleManager.Connection
 }
 
 @Composable
-fun MainContent(isWalking: Boolean, connectionStatus: String, receivedData: String) {
+fun MainContent(
+    isWalking: Boolean,
+    connectionStatus: String,
+    receivedData: String,
+    dailyStats: String
+) {
     Box(
-        contentAlignment = Alignment.Center,
         modifier = Modifier.fillMaxSize()
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                text = if (isWalking) "User is walking" else "User is not walking",
-                fontSize = 20.sp,
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            // Walking Status
+            Card(
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = if (isWalking) "User is walking" else "User is not walking",
+                        fontSize = 20.sp,
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = connectionStatus,
+                        fontSize = 18.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                    )
+                }
+            }
 
-            Text(
-                text = connectionStatus,
-                fontSize = 18.sp,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
-            )
+            // Data Display
+            Card(
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Current Data",
+                        fontSize = 18.sp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = receivedData,
+                        fontSize = 16.sp
+                    )
+                }
+            }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Text(
-                text = "Received Data: $receivedData",
-                fontSize = 16.sp,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
-            )
+            // Daily Stats
+            Card(
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Daily Statistics",
+                        fontSize = 18.sp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = dailyStats,
+                        fontSize = 16.sp
+                    )
+                }
+            }
         }
     }
 }
@@ -167,6 +294,11 @@ fun MainContent(isWalking: Boolean, connectionStatus: String, receivedData: Stri
 @Composable
 fun MainContentPreview() {
     AnkleAppTheme {
-        MainContent(isWalking = false, connectionStatus = "User is not walking", receivedData = "")
+        MainContent(
+            isWalking = false,
+            connectionStatus = "User is not walking",
+            receivedData = "",
+            dailyStats = "No stats available"
+        )
     }
 }
