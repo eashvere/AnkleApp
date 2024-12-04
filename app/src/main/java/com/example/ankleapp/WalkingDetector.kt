@@ -9,6 +9,7 @@ import kotlinx.coroutines.*
 
 interface WalkingListener {
     fun onWalkingDetected(isWalking: Boolean)
+    fun onStepCounted(stepCount: Int)
 }
 
 class WalkingDetector(
@@ -19,8 +20,10 @@ class WalkingDetector(
     private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
     private val stepDetector: Sensor? = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)
 
+    private var stepCount = 0
     var isWalking = false
     private var walkingTimeoutJob: Job? = null
+    private val scope = CoroutineScope(Dispatchers.Main + Job())
 
     private val timeoutMillis: Long = 2000
 
@@ -32,12 +35,15 @@ class WalkingDetector(
 
     fun stopDetection() {
         sensorManager.unregisterListener(this)
-        stopWalkingTimeout() // Stop any active timeout when detection stops
+        stopWalkingTimeout()
+        scope.cancel()
     }
 
     override fun onSensorChanged(event: SensorEvent?) {
         if (event?.sensor?.type == Sensor.TYPE_STEP_DETECTOR) {
-            detectWalking() // Triggered each time a step is detected
+            stepCount++
+            listener.onStepCounted(stepCount)
+            detectWalking()
         }
     }
 
@@ -56,9 +62,9 @@ class WalkingDetector(
         stopWalkingTimeout()
 
         // Start a new timeout that will trigger stop walking if no steps occur in the timeout period
-        walkingTimeoutJob = CoroutineScope(Dispatchers.Main).launch {
+        walkingTimeoutJob = scope.launch {
             delay(timeoutMillis)
-            stopWalking() // If no further steps detected within timeoutMillis, assume stopped
+            stopWalking()
         }
     }
 
@@ -70,7 +76,15 @@ class WalkingDetector(
     private fun stopWalking() {
         if (isWalking) {
             isWalking = false
-            listener.onWalkingDetected(false) // Notify listener that walking has stopped
+            listener.onWalkingDetected(false)
         }
     }
+
+    fun resetStepCount() {
+        stepCount = 0
+        listener.onStepCounted(stepCount)
+    }
+
+    // Optional: Get current step count
+    fun getCurrentStepCount(): Int = stepCount
 }

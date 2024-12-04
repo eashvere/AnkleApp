@@ -4,12 +4,17 @@
     <!-- Permissions for activity recognition and foreground service -->
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
 
     <!-- Request legacy Bluetooth permissions on older devices -->
     <uses-permission android:name="android.permission.BLUETOOTH"
         android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"
         android:maxSdkVersion="30" />
+
+    <uses-permission android:name="android.permission.INTERNET"/>
 
     <!-- Permissions for Bluetooth LE scanning, advertising, and connecting -->
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
@@ -23,6 +28,10 @@
 
     <!-- Feature requirement for Bluetooth LE -->
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true"/>
+
+    <!-- Notification Permission -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
     <application
         android:attributionTags="com.example.ankleapp"
@@ -46,6 +55,8 @@
         <service
             android:name=".WalkingDetectionService"
             android:enabled="true"
-            android:exported="false" />
+            android:exported="false"
+            android:foregroundServiceType="location|dataSync"
+            tools:ignore="ForegroundServicePermission" />
     </application>
 </manifest>

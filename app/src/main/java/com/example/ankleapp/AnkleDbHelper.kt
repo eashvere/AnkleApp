@@ -1,77 +1,115 @@
 package com.example.ankleapp.data
 
-import android.annotation.SuppressLint
-import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
-import com.example.ankleapp.data.AnkleDbHelper.Companion.COLUMN_EVENT_DURATION
-import com.example.ankleapp.data.AnkleDbHelper.Companion.COLUMN_EVENT_TYPE
-import com.example.ankleapp.data.AnkleDbHelper.Companion.COLUMN_ID
-import com.example.ankleapp.data.AnkleDbHelper.Companion.COLUMN_SESSION_ID
-import com.example.ankleapp.data.AnkleDbHelper.Companion.COLUMN_SESSION_START
-import com.example.ankleapp.data.AnkleDbHelper.Companion.COLUMN_TOTAL_DURATION
-import java.time.LocalDateTime
-import java.time.ZoneOffset
+import android.util.Log
 
-// Database Helper
 class AnkleDbHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null, DATABASE_VERSION) {
     companion object {
+        // Database version and name
         const val DATABASE_NAME = "AnkleData.db"
-        const val DATABASE_VERSION = 1
+        const val DATABASE_VERSION = 3  // Incremented for new aggregated stats table
 
-        // Table names
-        const val TABLE_WALKING_SESSIONS = "walking_sessions"
-        const val TABLE_POSTURE_EVENTS = "posture_events"
+        // Table names - each table has a distinct purpose
+        const val TABLE_DAILY_STATS = "daily_stats"           // Stores individual day statistics
+        const val TABLE_AGGREGATED_STATS = "aggregated_stats" // Stores weekly/monthly summaries
 
-        // Common columns
-        const val COLUMN_ID = "id"
-        const val COLUMN_TIMESTAMP = "timestamp"
+        // Daily stats table columns - tracking detailed daily metrics
+        const val DAILY_COLUMN_DATE = "date"  // Primary key for daily records
+        const val DAILY_COLUMN_TOTAL_WALKING = "total_walking_time"
+        const val DAILY_COLUMN_TOTAL_STATIC = "total_static_time"
+        const val DAILY_COLUMN_WALKING_BAD_POSTURE = "walking_bad_posture_time"
+        const val DAILY_COLUMN_STATIC_BAD_POSTURE = "static_bad_posture_time"
+        const val DAILY_COLUMN_LEFT_EVENTS = "left_events"
+        const val DAILY_COLUMN_RIGHT_EVENTS = "right_events"
+        const val DAILY_COLUMN_FRONT_EVENTS = "front_events"
 
-        // Walking sessions columns
-        const val COLUMN_SESSION_START = "session_start"
-        const val COLUMN_SESSION_END = "session_end"
-        const val COLUMN_TOTAL_DURATION = "total_duration" // in seconds
-
-        // Posture events columns
-        const val COLUMN_EVENT_TYPE = "event_type" // 'L' or 'R' for left/right
-        const val COLUMN_EVENT_START = "event_start"
-        const val COLUMN_EVENT_END = "event_end"
-        const val COLUMN_EVENT_DURATION = "event_duration" // in seconds
-        const val COLUMN_SESSION_ID = "session_id"
+        // Aggregated stats table columns - storing period summaries
+        const val AGG_COLUMN_PERIOD_TYPE = "period_type"      // 'W' for weekly, 'M' for monthly
+        const val AGG_COLUMN_START_DATE = "period_start_date" // Start of the period
+        const val AGG_COLUMN_END_DATE = "period_end_date"     // End of the period
+        const val AGG_COLUMN_TOTAL_WALKING = "total_walking_time"
+        const val AGG_COLUMN_TOTAL_STATIC = "total_static_time"
+        const val AGG_COLUMN_WALKING_BAD_POSTURE = "walking_bad_posture_time"
+        const val AGG_COLUMN_STATIC_BAD_POSTURE = "static_bad_posture_time"
+        const val AGG_COLUMN_LEFT_EVENTS = "left_events"
+        const val AGG_COLUMN_RIGHT_EVENTS = "right_events"
+        const val AGG_COLUMN_FRONT_EVENTS = "front_events"
+        const val AGG_COLUMN_BEST_DAY = "best_day_date"      // Date with best posture
+        const val AGG_COLUMN_WORST_DAY = "worst_day_date"    // Date with worst posture
     }
 
     override fun onCreate(db: SQLiteDatabase) {
-        // Create walking sessions table
-        val createWalkingSessionsTable = """
-            CREATE TABLE $TABLE_WALKING_SESSIONS (
-                $COLUMN_ID INTEGER PRIMARY KEY AUTOINCREMENT,
-                $COLUMN_SESSION_START INTEGER NOT NULL,
-                $COLUMN_SESSION_END INTEGER,
-                $COLUMN_TOTAL_DURATION INTEGER
-            )
+        // Create daily stats table
+        val createDailyStatsTable = """
+            CREATE TABLE $TABLE_DAILY_STATS (
+                $DAILY_COLUMN_DATE TEXT PRIMARY KEY,
+                $DAILY_COLUMN_TOTAL_WALKING INTEGER NOT NULL DEFAULT 0,
+                $DAILY_COLUMN_TOTAL_STATIC INTEGER NOT NULL DEFAULT 0,
+                $DAILY_COLUMN_WALKING_BAD_POSTURE INTEGER NOT NULL DEFAULT 0,
+                $DAILY_COLUMN_STATIC_BAD_POSTURE INTEGER NOT NULL DEFAULT 0,
+                $DAILY_COLUMN_LEFT_EVENTS INTEGER NOT NULL DEFAULT 0,
+                $DAILY_COLUMN_RIGHT_EVENTS INTEGER NOT NULL DEFAULT 0,
+                $DAILY_COLUMN_FRONT_EVENTS INTEGER NOT NULL DEFAULT 0
+            );
         """.trimIndent()
 
-        // Create posture events table
-        val createPostureEventsTable = """
-            CREATE TABLE $TABLE_POSTURE_EVENTS (
-                $COLUMN_ID INTEGER PRIMARY KEY AUTOINCREMENT,
-                $COLUMN_SESSION_ID INTEGER NOT NULL,
-                $COLUMN_EVENT_TYPE TEXT NOT NULL,
-                $COLUMN_EVENT_START INTEGER NOT NULL,
-                $COLUMN_EVENT_END INTEGER,
-                $COLUMN_EVENT_DURATION INTEGER,
-                FOREIGN KEY ($COLUMN_SESSION_ID) REFERENCES $TABLE_WALKING_SESSIONS($COLUMN_ID)
-            )
+        // Create aggregated stats table
+        val createAggregatedStatsTable = """
+            CREATE TABLE $TABLE_AGGREGATED_STATS (
+                $AGG_COLUMN_PERIOD_TYPE TEXT NOT NULL,
+                $AGG_COLUMN_START_DATE TEXT NOT NULL,
+                $AGG_COLUMN_END_DATE TEXT NOT NULL,
+                $AGG_COLUMN_TOTAL_WALKING INTEGER NOT NULL DEFAULT 0,
+                $AGG_COLUMN_TOTAL_STATIC INTEGER NOT NULL DEFAULT 0,
+                $AGG_COLUMN_WALKING_BAD_POSTURE INTEGER NOT NULL DEFAULT 0,
+                $AGG_COLUMN_STATIC_BAD_POSTURE INTEGER NOT NULL DEFAULT 0,
+                $AGG_COLUMN_LEFT_EVENTS INTEGER NOT NULL DEFAULT 0,
+                $AGG_COLUMN_RIGHT_EVENTS INTEGER NOT NULL DEFAULT 0,
+                $AGG_COLUMN_FRONT_EVENTS INTEGER NOT NULL DEFAULT 0,
+                $AGG_COLUMN_BEST_DAY TEXT,
+                $AGG_COLUMN_WORST_DAY TEXT,
+                PRIMARY KEY ($AGG_COLUMN_PERIOD_TYPE, $AGG_COLUMN_START_DATE)
+            );
         """.trimIndent()
 
-        db.execSQL(createWalkingSessionsTable)
-        db.execSQL(createPostureEventsTable)
+        try {
+            db.beginTransaction()
+            db.execSQL(createDailyStatsTable)
+            db.execSQL(createAggregatedStatsTable)
+            db.setTransactionSuccessful()
+            Log.d("AnkleDbHelper", "Database tables created successfully")
+        } catch (e: Exception) {
+            Log.e("AnkleDbHelper", "Error creating tables: ${e.message}")
+        } finally {
+            db.endTransaction()
+        }
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        db.execSQL("DROP TABLE IF EXISTS $TABLE_POSTURE_EVENTS")
-        db.execSQL("DROP TABLE IF EXISTS $TABLE_WALKING_SESSIONS")
+        // Handle database upgrades - drop and recreate tables
+        try {
+            db.beginTransaction()
+            // Drop existing tables
+            db.execSQL("DROP TABLE IF EXISTS $TABLE_DAILY_STATS")
+            db.execSQL("DROP TABLE IF EXISTS $TABLE_AGGREGATED_STATS")
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+
+        // Create new tables
+        onCreate(db)
+    }
+
+    fun verifyAndUpdateDatabase() {
+        val db = writableDatabase
+
+        // Ensure tables exist with correct structure
+        db.execSQL("DROP TABLE IF EXISTS $TABLE_DAILY_STATS")
+        db.execSQL("DROP TABLE IF EXISTS $TABLE_AGGREGATED_STATS")
+
         onCreate(db)
     }
 }
